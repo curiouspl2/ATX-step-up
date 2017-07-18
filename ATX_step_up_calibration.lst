@@ -1,0 +1,1171 @@
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE  1
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+               00001 ; this is dc-dc step up module cooperating with cheap ATX power supply.
+               00002  
+               00003 ; this code is cut down code allowing calibration of hardware. 
+               00004 ; it simply displays voltage readout from ADC, and threshold levels.
+               00005 ; one simply sets upper float voltage threshold level using voltage divider potentiometer
+               00006 ; and then one sets ADC scale potentiometer to make it display proper ADC value. 
+               00007 
+               00008 ;
+               00009 ;       CPU configuration
+               00010 ;
+               00011 
+Message [301] : Processor = 12F675
+               00012         MESSG           "Processor = 12F675"
+0000      00013         #define         RAMStart        0x20
+               00014         processor       12f675
+               00015         include         <p12f675.inc>
+               00001         LIST
+               00002 ; P12F675.INC  Standard Header File, Version 1.04    Microchip Technology, Inc.
+               00284         LIST
+               00016 
+002007 3FCC    00017         __config        _INTRC_OSC_NOCLKOUT & _PWRTE_ON & _WDT_ON & _CP_OFF & _BODEN_ON  & _MCLRE_OFF
+               00018 ;       __config        _INTRC_OSC_NOCLKOUT & _PWRTE_ON & _WDT_OFF & _CP_OFF & _BODEN_ON  & _MCLRE_OFF
+               00019 
+               00020 ;*******************************************************************
+               00021 ;includes
+               00022 
+               00023         include         "infrared_serial.asm"
+               00001 ;********************************************************
+               00002 ;
+               00003 ;    software serial Output Routines for PIC16Fx
+               00004 ;    and infrared 36khz modulated serial output routines.
+               00005 
+               00006 ;    Clock is 4.0 MHz.
+               00007 ;    ie. 1.0 us per cycle = 4/Fosc.
+               00008 ;
+               00009 ;    9600 Baud  = 104.17 us
+               00010 ;               = 104.17   CPU cycles
+               00011 ;
+               00012 ;
+               00013 ;       4800 baud = 208 us
+               00014 ;       1200 baud = 832 us
+               00015 ;
+               00016 ;       300 baud = 3333.333 us
+               00017 ;               - 3333.333 CPU cycles
+               00018 
+               00019 ;
+               00020 ;********************************************************
+               00021 ;
+               00022 ;       Output the character in W. Assumes Mac is ready.
+               00023 ;
+               00024 ;       Uses W
+               00025 ;
+               00026 ;       currently code below is result of some brainstorming and experiments.
+               00027 ;       infrared tsop4136 reciever cannot handle data rates below 1200 and above 2400,
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE  2
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+               00028 ;       so 300 baud output which was initial idea had to be abandoned.
+               00029 ;       1200 baud works perfectly - according to experiments, so this code is left so far.
+               00030 ;       in future, ifdef'ing the code is needed - this way user can select proper baud rate,
+               00031 ;       ir modulation or not, and ir modulation period and duty cycle.
+               00032 ;       right now one have to either to adjust stuff by hand, or use as-is.
+               00033 
+               00034 
+               00035 
+0000 00B2      00036 putchr  movwf   S_Wtemp         ; Character being output
+               00037 
+Error [179] : Forward references to macros are not allowed.
+               00038         bank1   
+Error [128] : Missing argument(s).
+0001      00039         bcf     LED_IR_TRIS     ; we will use IR LED pin as output
+Error [179] : Forward references to macros are not allowed.
+               00040         bank0
+               00041 
+               00042 
+0001 3009      00043         movlw   0x09            ; Bit count, 9 - incude start bit. 
+0002 00B3      00044         movwf   S_count
+               00045 
+               00046 ;       bcf     S_out           ; Send a 0 - Start bit
+0003 1036      00047         bcf     S_mask,0                ; send 0 . this is our first bit, start bit.
+               00048 
+               00049 ;       nop
+               00050 ;       nop
+               00051 ;       nop
+               00052 ;       nop
+               00053 
+0004      00054 put_clp
+               00055 
+               00056                                 ; baud delay
+0004 1836      00057         btfsc   S_mask,0                ; if S_mask is 1
+0005 2013      00058         call    delay_832uS      ; just idle delay...
+               00059 
+0006 1C36      00060         btfss   S_mask,0                ; if S_mask is 0
+0007 201C      00061         call    IR_out_832uS     ; modulate light with 36khz for 832uS
+               00062 
+               00063 
+0008 0CB2      00064         rrf     S_Wtemp,f       ; Transmit a bit
+0009 1803 280D 00065         bc      t_0
+               00066 
+               00067 ;       bcf     S_out           ; Send a 0
+000B 1036      00068         bcf     S_mask,0
+               00069 
+000C 280E      00070         goto     tx_1
+               00071 
+               00072 ;t_0    bsf     S_out           ; Send a 1
+000D 1436      00073 t_0     bsf     S_mask,0
+               00074 
+000E 0BB3      00075 tx_1    decfsz  S_count,f       ; Done all bits?
+000F 2804      00076         goto    put_clp
+               00077 
+               00078 
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE  3
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+               00079 ;        btfsc   S_mask,0                ; if S_mask is 1
+               00080 ;        call    delay_832uS      ; just idle delay...
+               00081 ;
+               00082 ;        btfss   S_mask,0                ; if S_mask is 0
+               00083 ;        call    IR_out_832uS     ; modulate light with 36khz for 3333uS
+               00084 
+               00085 
+               00086 
+               00087 ;       bsf     S_out           ; Transmit two stop bit
+               00088         ; 1 is just idle delay with infrared TX. so just idle 2 bits.
+0010 2013      00089         call    delay_832uS
+0011 2013      00090         call    delay_832uS
+               00091 
+0012 0008      00092         return
+               00093 
+               00094 ;---------------------------IR serial related delay routines
+               00095 
+0013      00096 delay_832uS              ; ~832us, 1200 baud
+               00097                         ;828 cycles
+0013 30A5      00098         movlw   0xa5
+0014 00B4      00099         movwf   d1
+0015 3001      00100         movlw   0x01
+0016 00B5      00101         movwf   d2
+0017      00102 Delay_0
+0017 0BB4      00103         decfsz  d1, f
+0018 281A      00104         goto    $+2
+0019 0BB5      00105         decfsz  d2, f
+001A 2817      00106         goto    Delay_0
+               00107                         ;4 cycles (including call)
+001B 0008      00108         return
+               00109 
+               00110 ;---------------------
+               00111 
+001C      00112 IR_out_832uS
+               00113 
+001C 301F      00114         movlw   d'31'           ; 30*27us = 810us  - plus 1
+001D 00B4      00115         movwf   d1              ; plus 2 = 812
+001E      00116 IR_out_1
+Error [128] : Missing argument(s).
+001E      00117         bsf     LED_IR           ; 1us
+001E 281F      00118         goto    $+1             ; 2+3
+001F 2820      00119         goto    $+1             ; 4+5
+0020 2821      00120         goto    $+1             ; 6+7
+0021 2822      00121         goto    $+1             ; 8+9
+0022 2823      00122         goto    $+1             ; 10+11
+0023 0000      00123         nop                     ; 12
+Error [128] : Missing argument(s).
+0024      00124         bcf     LED_IR           ; 13
+0024 2825      00125         goto    $+1             ; 14+15
+0025 2826      00126         goto    $+1             ; 16+17
+0026 2827      00127         goto    $+1             ; 18+19
+0027 2828      00128         goto    $+1             ; 20+21
+0028 2829      00129         goto    $+1             ; 22+23
+0029 0000      00130         nop                     ; 24
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE  4
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+002A 0BB4      00131         decfsz  d1,f            ; 25
+002B 281E      00132         goto    IR_out_1        ; 26 and 27
+               00133                         ; 810
+Error [128] : Missing argument(s).
+002C      00134         bsf     LED_IR   ; 811, 1
+               00135 
+002C 282D      00136         goto    $+1     ; 812,813
+002D 282E      00137         goto    $+1     ; 814,815
+002E 282F      00138         goto    $+1     ; 816,817
+002F 2830      00139         goto    $+1     ; 818,819
+0030 2831      00140         goto    $+1     ; 820,821
+0031 0000      00141         nop     ; 822, 12
+Error [128] : Missing argument(s).
+0032      00142         bcf     LED_IR ; 823, 13
+0032 2833      00143         goto    $+1     ;824,825
+0033 2834      00144         goto    $+1     ;826,827
+0034 0000      00145         nop     ; 828, 18
+               00146                         ; +4 (incl. call = 832)
+0035 0008      00147         return
+               00148 
+               00149 
+               00150 
+               00024 
+               00025 ; -----
+               00026 
+               00027 
+               00028 
+               00029 bank0   macro
+               00030         errorlevel      +302            ; Re-enable bank warning
+               00031         bcf             STATUS,RP0      ; Select Bank 0
+               00032         endm
+               00033 
+               00034 ;-------------------------------------------------------------------
+               00035 ;       Select Register Bank 1
+               00036 
+               00037 bank1   macro
+               00038         bsf             STATUS,RP0      ; Select Bank 1
+               00039         errorlevel      -302            ; disable warning
+               00040         endm
+               00041 
+               00042 
+               00043 WDT_set_to_2s   macro                   ; sets WDT to 2 seconds. switches bank to bank0 
+               00044         bank1
+               00045         bsf     OPTION_REG,PS1
+               00046         nop
+               00047         bsf     OPTION_REG,PS2
+               00048         nop
+               00049         bsf     OPTION_REG,PS0  ; prescaler set to ~2s of time
+               00050         nop
+               00051         bsf     OPTION_REG,PSA  ; prescaler assigned to WDT.
+               00052         bank0
+               00053                 endm
+               00054 
+               00055 
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE  5
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+               00056 compare_gp1_gp0         macro   ; turn on comparator, compare gp1 (inverting) and gp0 (noninverting)
+               00057         movlw   b'00000010'     ;  Comparator on, without output, comparing AN0 and AN1
+               00058         movwf   CMCON           ;
+               00059                 endm
+               00060 
+               00061 compare_gp1_CVref       macro
+               00062         movlw   b'00000100'     ;  Comparator on, without output, comparing AN1 and vref
+               00063         movwf   CMCON           ;  (we want to check battery state)
+               00064                 endm
+               00065 
+               00066 comparator_off  macro
+               00067         movlw   b'00000111'     ;  Comparator off, without output, inputs shorted to ground
+               00068         movwf   CMCON           ;  (conserve power)
+               00069                 endm
+               00070 
+               00071 
+               00072 
+               00073 if_comparator_set       macro
+               00074         btfsc   CMCON,COUT      ; if rectifier voltage is lower than battery, skip
+               00075         endm
+               00076 
+               00077 
+0036      00078 #define         COMPARATOR_INVERTING_INPUT_TRIS         TRISIO,GP1
+0036      00079 #define         COMPARATOR_NONINVERTING_INPUT_TRIS      TRISIO,GP0
+0036      00080 #define         COMPARATOR_INVERTING_INPUT              GPIO,GP1
+0036      00081 #define         COMPARATOR_NONINVERTING_INPUT           GPIO,GP0
+               00082 
+0036      00083 #define         CHARGING_KEY_TRIS                       TRISIO,GP5
+0036      00084 #define         CHARGING_KEY                            GPIO,GP5
+               00085 
+0036      00086 #define         BATTERY_LOAD_KEY_TRIS                   TRISIO,GP2
+0036      00087 #define         BATTERY_LOAD_KEY                        GPIO,GP2
+               00088 
+0036      00089 #define         LED_IR_TRIS                             TRISIO,GP4
+0036      00090 #define         LED_IR                                  GPIO,GP4
+               00091 
+0036      00092 #define         KEYBOARD_TRIS                           TRISIO,GP3
+0036      00093 #define         KEYBOARD                                GPIO,GP3
+               00094 
+               00095 
+               00096 
+               00097 
+               00098 ;*******************************************************************
+               00099 
+               00100         cblock  RAMStart
+               00101 
+               00102         DELAY                   ; used by "CONVERT" subroutine
+               00103         bcd:8                   ; BCD, MSD first
+               00104         COUNT                   ; Bin to BCD convert (bit count)
+               00105         cnt                     ;                    (BCD BYTES)
+               00106 
+               00107 
+               00108         CHR
+               00109         TEMP                    ; DATS/Putchr temporary
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE  6
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+               00110         AccA:4                  ; Binary, MSByte first
+               00111 
+               00112         D_hex                   ; used by hex output routine
+               00113                                 ; used by serial out routines
+               00114         S_Wtemp
+               00115         S_count
+               00116         d1
+               00117         d2
+               00118         S_mask                  ; used by IR routine
+               00119         COMPARATOR_LOW_RESULT   ; internal comparator based ADC result low range
+               00120         COMPARATOR_HIGH_RESULT  ; internal comparator based ADC result high range
+               00121         endc
+               00122 
+               00123 
+               00124 
+0000           00125                 org 0            ; Reset Vector
+Error [118] : Overwriting previous address contents.
+0000 2805      00126                 goto INIT
+               00127 
+0004           00128                 org 4            ; Interrupt Vector
+Error [118] : Overwriting previous address contents.
+0004 2877      00129                 goto COMP
+0005           00130                 org 5
+               00131 
+0005      00132 INIT:           
+               00133                 WDT_set_to_2s           ; set WDT to time out after 2s and switch to bank0 
+                   M         bank1
+Error [118] : Overwriting previous address contents.
+0005 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+Error [118] : Overwriting previous address contents.
+0006 1481          M         bsf     OPTION_REG,PS1
+Error [118] : Overwriting previous address contents.
+0007 0000          M         nop
+Error [118] : Overwriting previous address contents.
+0008 1501          M         bsf     OPTION_REG,PS2
+Error [118] : Overwriting previous address contents.
+0009 0000          M         nop
+Error [118] : Overwriting previous address contents.
+000A 1401          M         bsf     OPTION_REG,PS0  ; prescaler set to ~2s of time
+Error [118] : Overwriting previous address contents.
+000B 0000          M         nop
+Error [118] : Overwriting previous address contents.
+000C 1581          M         bsf     OPTION_REG,PSA  ; prescaler assigned to WDT.
+                   M         bank0
+                   M         errorlevel      +302            ; Re-enable bank warning
+Error [118] : Overwriting previous address contents.
+000D 1283          M         bcf             STATUS,RP0      ; Select Bank 0
+               00134 
+Error [118] : Overwriting previous address contents.
+000E 0064      00135                 clrwdt                  ; immediatelly clean it. 
+               00136                 
+               00137 
+               00138 ;               movlw H'14'      ; 
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE  7
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+Error [118] : Overwriting previous address contents.
+000F 3004      00139                 movlw b'00000100'      ; Timer 1:
+               00140                                         ; 0 - TMR1ON - 0(off)
+               00141                                         ; 1 - TMR1CS - 0(off) 
+               00142                                         ; 2 - /T1SYNC - 1(off)
+               00143                                         ; 3 - T1OSCEN - 0(off)
+               00144 
+               00145                                         ; 4 - T1CKPS0 - 0 
+               00146                                         ; 5 - T1CKPS1 - 0 ; 1:1 prescaler
+               00147                                         ; 6 - - 0 
+               00148                                         ; 7 - - 0 
+               00149 
+Error [118] : Overwriting previous address contents.
+0010 0090      00150                 movwf T1CON      ; A 1 MHz clock is used
+               00151 
+               00152 
+Error [118] : Overwriting previous address contents.
+0011 178B      00153                 bsf INTCON,GIE   ; Enable Global Int
+Error [118] : Overwriting previous address contents.
+0012 170B      00154                 bsf INTCON,PEIE  ; Unmask Peripheral Int
+               00155 
+0013      00156 it_is_hot:
+               00157                 bank1
+Error [118] : Overwriting previous address contents.
+0013 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+Error [118] : Overwriting previous address contents.
+0014 23FF      00158                 call    calibration_hot         ; calibration value for hot environment (above 0C)
+Error [118] : Overwriting previous address contents.
+0015 0090      00159                 movwf   OSCCAL                  ; calibrate internal oscillator - required as we do serial out which is timing critical
+               00160 
+0016      00161 quit_thermal_calibration:
+               00162                 bank0   
+                   M         errorlevel      +302            ; Re-enable bank warning
+Error [118] : Overwriting previous address contents.
+0016 1283          M         bcf             STATUS,RP0      ; Select Bank 0
+               00163 
+0017      00164 MAIN:           
+Error [118] : Overwriting previous address contents.
+0017 0064      00165                 clrwdt
+               00166 ;               call    short_sleep             ; sleep for 2 seconds. 
+               00167                                                 ; this ensures supply voltage settles, as chip consumes minimum power.
+               00168 
+Error [118] : Overwriting previous address contents.
+0018 2048      00169                 call    CONVERT                 ; measure voltage of battery
+Error [118] : Overwriting previous address contents.
+0019 0064      00170                 clrwdt
+Error [118] : Overwriting previous address contents.
+001A 2032      00171                 call    DISPLAY_VOLTAGE         ; display voltage
+Error [118] : Overwriting previous address contents.
+001B 0064      00172                 clrwdt
+Error [118] : Overwriting previous address contents.
+001C 2081      00173                 call    CONVERT_COMPARATOR_LOW  ; measure voltage of battery using internal reference voltage and comparator
+Error [118] : Overwriting previous address contents.
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE  8
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+001D 0064      00174                 clrwdt
+Error [118] : Overwriting previous address contents.
+001E 2026      00175                 call    DISPLAY_COMPARISON_RESULT_LOW ; display voltage of battery measured using comparator. 
+               00176 
+Error [118] : Overwriting previous address contents.
+001F 0064      00177                 clrwdt
+Error [118] : Overwriting previous address contents.
+0020 208D      00178                 call    CONVERT_COMPARATOR_HIGH ; measure voltage of battery using internal reference voltage and comparator
+Error [118] : Overwriting previous address contents.
+0021 0064      00179                 clrwdt
+Error [118] : Overwriting previous address contents.
+0022 202C      00180                 call    DISPLAY_COMPARISON_RESULT_HIGH   ; display voltage of battery measured using comparator. 
+               00181 
+Error [118] : Overwriting previous address contents.
+0023 20E0      00182                 call    crlf                    ; new line. 
+Error [118] : Overwriting previous address contents.
+0024 0064      00183                 clrwdt
+               00184 ;       call    long_sleep              ; sleep for 2 seconds.
+Error [118] : Overwriting previous address contents.
+0025 2817      00185                 goto MAIN
+               00186 
+               00187 
+               00188 
+               00189 
+               00190 
+0026      00191 DISPLAY_COMPARISON_RESULT_LOW:
+Error [118] : Overwriting previous address contents.
+0026 01AD      00192         clrf    AccA
+Error [118] : Overwriting previous address contents.
+0027 01AE      00193         clrf    AccA+1
+Error [118] : Overwriting previous address contents.
+0028 01AF      00194         clrf    AccA+2
+Error [118] : Overwriting previous address contents.
+0029 0837      00195         movfw   COMPARATOR_LOW_RESULT
+Error [118] : Overwriting previous address contents.
+002A 00B0      00196         movwf   AccA+3
+Error [118] : Overwriting previous address contents.
+002B 2838      00197         goto    display_5_digit_number
+               00198 
+002C      00199 DISPLAY_COMPARISON_RESULT_HIGH:
+Error [118] : Overwriting previous address contents.
+002C 01AD      00200         clrf    AccA
+Error [118] : Overwriting previous address contents.
+002D 01AE      00201         clrf    AccA+1
+Error [118] : Overwriting previous address contents.
+002E 01AF      00202         clrf    AccA+2
+Error [118] : Overwriting previous address contents.
+002F 0838      00203         movfw   COMPARATOR_HIGH_RESULT
+Error [118] : Overwriting previous address contents.
+0030 00B0      00204         movwf   AccA+3
+Error [118] : Overwriting previous address contents.
+0031 2838      00205         goto    display_5_digit_number
+               00206 
+               00207 
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE  9
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+               00208 
+               00209 ;-------------------- simply dumps TMR1H and TMR1L value to console
+0032      00210 DISPLAY_VOLTAGE:
+Error [118] : Overwriting previous address contents.
+0032 01AD      00211         clrf    AccA
+Error [118] : Overwriting previous address contents.
+0033 01AE      00212         clrf    AccA+1
+Error [118] : Overwriting previous address contents.
+0034 080F      00213         movfw   TMR1H
+Error [118] : Overwriting previous address contents.
+0035 00AF      00214         movwf   AccA+2
+0036 080E      00215         movfw   TMR1L
+0037 00B0      00216         movwf   AccA+3
+               00217 
+0038      00218 display_5_digit_number:         ; this is common subroutine to display 5 digit (16bit decimal) number. 
+               00219 
+               00220 ;       Format as BCD string
+               00221 ;        iorwf   FPE,f           ; W may hold Error (0xff)
+               00222 
+0038 20B9      00223         call    B2_BCD          ; format as BCD
+               00224                                 ; extract and send to display
+               00225 
+               00226 
+0039 0826      00227         MOVF    bcd+5,W         ; 5  
+003A 20E4      00228         CALL    PutNyb
+               00229 
+003B 0E27      00230         SWAPF   bcd+6,W         ; 4  
+003C 20E4      00231         CALL    PutNyb
+               00232 
+003D 302E      00233         movlw   "."
+003E 2000      00234         call    putchr          ; . 
+               00235 
+               00236 
+003F 0827      00237         MOVF    bcd+6,W         ; 3  
+0040 20E4      00238         CALL    PutNyb
+               00239 
+0041 0E28      00240         SWAPF   bcd+7,W         ; 2  
+0042 20E4      00241         CALL    PutNyb
+               00242 
+0043 0828      00243         MOVF    bcd+7,W         ; 1  
+0044 20E4      00244         CALL    PutNyb
+               00245 
+0045 3020      00246         movlw   " "
+0046 2000      00247         call    putchr          ; " " space after each number 
+               00248 
+0047 0008      00249         return
+               00250 
+               00251                 
+               00252 
+               00253 
+               00254 ;-------------------------16bit ADC subroutine
+               00255 
+0048      00256 CONVERT:        
+               00257                 bank0
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 10
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+                   M         errorlevel      +302            ; Re-enable bank warning
+0048 1283          M         bcf             STATUS,RP0      ; Select Bank 0
+               00258                 compare_gp1_gp0         ; turn on comparator, compare gp1 (inverting) and gp0 (noninverting)
+0049 3002          M         movlw   b'00000010'     ;  Comparator on, without output, comparing AN0 and AN1
+004A 0099          M         movwf   CMCON           ;
+004B 018E      00259                 clrf    TMR1L       ; Clear Timer 1 L
+004C 018F      00260                 clrf    TMR1H       ; Clear Timer 1 H
+               00261 
+               00262                 bank1
+004D 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+004E 1485      00263                 bsf     COMPARATOR_INVERTING_INPUT_TRIS  ; set GP0 as input
+004F 100C      00264                 bcf     PIR1,TMR1IF
+               00265 
+0050      00266 DISCHARGE_COMPARATOR_CAP:
+               00267                 bank1            ; 
+0050 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+0051 1005      00268                 bcf     COMPARATOR_NONINVERTING_INPUT_TRIS              ; Set comparator inverting input as output
+               00269                 bank0
+                   M         errorlevel      +302            ; Re-enable bank warning
+0052 1283          M         bcf             STATUS,RP0      ; Select Bank 0
+0053 1005      00270                 bcf     COMPARATOR_NONINVERTING_INPUT           ; Discharge capacitor
+0054 01A0      00271                 clrf    DELAY
+0055      00272 DISCHARGE:      
+Message [305] : Using default destination of 1 (file).
+0055 0BA0      00273                 decfsz  DELAY
+0056 2855      00274                 goto    DISCHARGE
+0057 01A0      00275                 clrf    DELAY
+0058      00276 DISCHARGE2:     
+Message [305] : Using default destination of 1 (file).
+0058 0BA0      00277                 decfsz  DELAY
+0059 2858      00278                 goto    DISCHARGE2
+005A 01A0      00279                 clrf    DELAY
+005B      00280 DISCHARGE3:     
+Message [305] : Using default destination of 1 (file).
+005B 0BA0      00281                 decfsz  DELAY
+005C 285B      00282                 goto    DISCHARGE3
+005D 01A0      00283                 clrf    DELAY
+005E      00284 DISCHARGE4:     
+Message [305] : Using default destination of 1 (file).
+005E 0BA0      00285                 decfsz  DELAY
+005F 285E      00286                 goto    DISCHARGE4
+               00287 
+               00288                 bank1           ;  switch bank to 1
+0060 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+0061 1405      00289                 bsf     COMPARATOR_NONINVERTING_INPUT_TRIS              ; make comparator inverting input input, 
+               00290                 bank0           ; switch back to bank0 . 
+                   M         errorlevel      +302            ; Re-enable bank warning
+0062 1283          M         bcf             STATUS,RP0      ; Select Bank 0
+0063 1805      00291                 btfsc   COMPARATOR_NONINVERTING_INPUT           ;  make sure capacitor got discharged
+0064 2850      00292                 goto    DISCHARGE_COMPARATOR_CAP                ; if not, go back discharging it. 
+               00293                                 ; else 
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 11
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+0065 118C      00294                 bcf     PIR1,CMIF                               ; Clear comp Int flag
+               00295 
+               00296                                  ; cap starts charging 
+               00297                                 
+               00298                 bank0
+                   M         errorlevel      +302            ; Re-enable bank warning
+0066 1283          M         bcf             STATUS,RP0      ; Select Bank 0
+0067 1410      00299                 bsf     T1CON,TMR1ON                            ; Start Timer 1
+0068 0899      00300                 movf    CMCON,f                                 ; Read to sync output
+               00301                 bank1
+0069 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+006A 140C      00302                 bsf     PIE1,TMR1IE                             ; unmask TMR1 interrupt 
+006B 0000      00303                 nop
+006C 158C      00304                 bsf     PIE1,CMIE                               ; Unmask Comp Int
+               00305 
+006D 0000      00306 WAIT:           nop
+006E 198C      00307                 btfsc   PIE1,CMIE                               ; Wait for comp Int
+               00308                                                                 ; ie wait until Int
+006F 286D      00309                 goto    WAIT                                    ; Enable bit has been
+               00310                                 ; cleared
+0070      00311 GETDATA:                        ; Timer 1 contains
+               00312                                 ; DATA (TMR1L TMR1H)
+               00313 
+               00314                 bank1            ; 
+0070 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+0071 1005      00315                 bcf     COMPARATOR_NONINVERTING_INPUT_TRIS              ; Set comparator inverting input as output. not sure if this will make results better or worse...
+               00316                 bank0
+                   M         errorlevel      +302            ; Re-enable bank warning
+0072 1283          M         bcf             STATUS,RP0      ; Select Bank 0
+0073 1005      00317                 bcf     COMPARATOR_NONINVERTING_INPUT           ; Discharge capacitor
+               00318                 comparator_off                                  ; turn off comparator to conserve power
+0074 3007          M         movlw   b'00000111'     ;  Comparator off, without output, inputs shorted to ground
+0075 0099          M         movwf   CMCON           ;  (conserve power)
+               00319 
+0076 0008      00320                 return
+               00321 
+               00322 ;           Comparator Interrupt Service routine
+               00323 
+0077      00324 COMP:           bank0
+                   M         errorlevel      +302            ; Re-enable bank warning
+0077 1283          M         bcf             STATUS,RP0      ; Select Bank 0
+0078 1010      00325                 bcf     T1CON,TMR1ON                            ; Stop Timer 1
+0079 118C      00326                 bcf     PIR1,CMIF                                       ; Clear Interrupt flag
+007A 0000      00327                 nop
+007B 100C      00328                 bcf     PIR1,TMR1IF
+               00329                 bank1
+007C 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+007D 118C      00330                 bcf     PIE1,CMIE                                       ; Mask Comparator Int
+007E 0000      00331                 nop
+007F 100C      00332                 bcf     PIE1,TMR1IE
+0080 0009      00333                 retfie 
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 12
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+               00334 
+               00335 ;--------------------------measure voltage using built in reference voltage 
+               00336 
+0081      00337 CONVERT_COMPARATOR_LOW:
+0081 01B7      00338         clrf    COMPARATOR_LOW_RESULT
+               00339         compare_gp1_CVref
+0082 3004          M         movlw   b'00000100'     ;  Comparator on, without output, comparing AN1 and vref
+0083 0099          M         movwf   CMCON           ;  (we want to check battery state)
+0084      00340 convert_low_loop:
+0084 0837      00341         movfw   COMPARATOR_LOW_RESULT
+0085 20B3      00342         call    set_vrcon_low
+0086 1B19      00343         btfsc   CMCON,COUT
+0087 288A      00344         goto    comp_conv_exit
+Message [305] : Using default destination of 1 (file).
+0088 0FB7      00345         incfsz  COMPARATOR_LOW_RESULT   
+0089 2884      00346         goto    convert_low_loop
+               00347 
+008A      00348 comp_conv_exit:
+               00349         comparator_off
+008A 3007          M         movlw   b'00000111'     ;  Comparator off, without output, inputs shorted to ground
+008B 0099          M         movwf   CMCON           ;  (conserve power)
+008C 0008      00350         return
+               00351 
+               00352 
+008D      00353 CONVERT_COMPARATOR_HIGH:
+008D 01B8      00354         clrf    COMPARATOR_HIGH_RESULT
+               00355         compare_gp1_CVref
+008E 3004          M         movlw   b'00000100'     ;  Comparator on, without output, comparing AN1 and vref
+008F 0099          M         movwf   CMCON           ;  (we want to check battery state)
+0090      00356 convert_high_loop:
+0090 0838      00357         movfw   COMPARATOR_HIGH_RESULT
+0091 20AF      00358         call    set_vrcon_high
+0092 1B19      00359         btfsc   CMCON,COUT
+0093 288A      00360         goto    comp_conv_exit  
+Message [305] : Using default destination of 1 (file).
+0094 0FB8      00361         incfsz  COMPARATOR_HIGH_RESULT
+0095 2890      00362         goto    convert_high_loop
+               00363 
+               00364         comparator_off
+0096 3007          M         movlw   b'00000111'     ;  Comparator off, without output, inputs shorted to ground
+0097 0099          M         movwf   CMCON           ;  (conserve power)
+0098 0008      00365         return
+               00366 
+               00367 
+               00368 
+               00369 
+               00370 ;------------watchdog triggered sleep delay routines
+               00371 
+0099      00372 short_sleep:            ; less than second
+0099 0064      00373         clrwdt                  ; wdt must start from 0 , otherwise will overflow..
+               00374         bank1
+009A 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+009B 1101      00375         bcf     OPTION_REG,PS2
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 13
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+009C 0000      00376         nop
+009D 1081      00377         bcf     OPTION_REG,PS1
+009E 0063      00378         sleep
+009F 1501      00379         bsf     OPTION_REG,PS2
+00A0 0000      00380         nop
+00A1 1481      00381         bsf     OPTION_REG,PS1
+               00382         bank0
+                   M         errorlevel      +302            ; Re-enable bank warning
+00A2 1283          M         bcf             STATUS,RP0      ; Select Bank 0
+00A3 0064      00383         clrwdt
+               00384 
+00A4 0008      00385         return
+               00386 
+00A5      00387 long_sleep:             ; about 2 seconds
+00A5 0064      00388         clrwdt
+               00389         comparator_off
+00A6 3007          M         movlw   b'00000111'     ;  Comparator off, without output, inputs shorted to ground
+00A7 0099          M         movwf   CMCON           ;  (conserve power)
+00A8 20AC      00390         call    set_vrcon_off
+00A9 0063      00391         sleep
+00AA 0064      00392         clrwdt
+00AB 0008      00393         return
+               00394 
+               00395 ;--------------------vrcon subroutines
+               00396 
+00AC      00397 set_vrcon_off:
+               00398         bank1
+00AC 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+00AD 3000      00399         movlw   b'00000000'     ; set VRCON off
+00AE 28B6      00400         goto    common_set_vrcon
+               00401 
+00AF      00402 set_vrcon_high:
+               00403         bank1
+00AF 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+00B0 390F      00404         andlw   b'00001111'
+00B1 38A0      00405         iorlw   b'10100000'     ; enable voltage reference (VREN bit) , VRR - 1 - high
+00B2 28B6      00406         goto    common_set_vrcon
+               00407 
+00B3      00408 set_vrcon_low:
+               00409         bank1
+00B3 1683          M         bsf             STATUS,RP0      ; Select Bank 1
+                   M         errorlevel      -302            ; disable warning
+00B4 390F      00410         andlw   b'00001111'     ; only values 0-15 matter
+00B5 3880      00411         iorlw   b'10000000'     ; enable voltage reference (VREN bit) , VRR - 0 - low
+               00412 
+00B6      00413 common_set_vrcon:
+00B6 0099      00414         movwf   VRCON           ;       ~6.13V, 1.5325V per cell!
+               00415         bank0
+                   M         errorlevel      +302            ; Re-enable bank warning
+00B7 1283          M         bcf             STATUS,RP0      ; Select Bank 0
+00B8 0008      00416         return
+               00417 
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 14
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+               00418 ;******************************************************************
+               00419 ;
+               00420 ;       Convert 32-bit binary number at <AccA:4> into a bcd number
+               00421 ;       at <bcd:5>. Uses Mike Keitz's procedure for handling bcd
+               00422 ;       adjust. Microchip AN526
+               00423 ;
+               00424 
+00B9      00425 B2_BCD
+               00426 
+00B9 3020      00427 b2bcd   movlw   .32             ; 32-bits
+00BA 00A9      00428         movwf   COUNT           ; make cycle counter
+               00429 
+00BB 01A1      00430         clrf    bcd+0           ; clear result area
+00BC 01A2      00431         clrf    bcd+1
+00BD 01A3      00432         clrf    bcd+2
+00BE 01A4      00433         clrf    bcd+3
+00BF 01A5      00434         clrf    bcd+4
+00C0 01A6      00435         clrf    bcd+5
+00C1 01A7      00436         clrf    bcd+6
+00C2 01A8      00437         clrf    bcd+7
+               00438 
+               00439 
+00C3 3021      00440 b2bcd2  movlw   bcd             ; make pointer
+00C4 0084      00441         movwf   FSR
+00C5 3008      00442         movlw   .8              ; Number of BCD bytes?
+00C6 00AA      00443         movwf   cnt             ; 2 BCD digits per byte
+               00444 
+               00445 ; Mike's routine:
+               00446 
+00C7 3033      00447 b2bcd3  movlw   0x33
+00C8 0780      00448         addwf   INDF,f          ; add to both nybbles
+00C9 1980      00449         btfsc   INDF,3          ; test if low result > 7
+00CA 39F0      00450         andlw   0xf0            ; low result >7 so take the 3 out
+00CB 1B80      00451         btfsc   INDF,7          ; test if high result > 7
+00CC 390F      00452         andlw   0x0f            ; high result > 7 so ok
+00CD 0280      00453         subwf   INDF,f          ; any results <= 7, subtract back
+00CE 0A84      00454         incf    FSR,f           ; point to next
+00CF 0BAA      00455         decfsz  cnt,f
+00D0 28C7      00456         goto    b2bcd3
+               00457 
+00D1 0DB0      00458         rlf     AccA+3,f        ; get another bit
+00D2 0DAF      00459         rlf     AccA+2,f
+00D3 0DAE      00460         rlf     AccA+1,f
+00D4 0DAD      00461         rlf     AccA+0,f
+               00462 
+00D5 0DA8      00463         rlf     bcd+7,f
+00D6 0DA7      00464         rlf     bcd+6,f
+00D7 0DA6      00465         rlf     bcd+5,f
+00D8 0DA5      00466         rlf     bcd+4,f         ; put it into bcd
+00D9 0DA4      00467         rlf     bcd+3,f
+00DA 0DA3      00468         rlf     bcd+2,f
+00DB 0DA2      00469         rlf     bcd+1,f
+00DC 0DA1      00470         rlf     bcd+0,f
+               00471 
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 15
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+00DD 0BA9      00472         decfsz  COUNT,f         ; all done?
+00DE 28C3      00473         goto    b2bcd2          ; no, loop
+00DF 0008      00474         return                  ; yes
+               00475 
+               00476 
+               00477 
+               00478 
+               00479 ;***********************************************************************
+               00480 ;
+               00481 ;    Print CRLF to serial
+               00482 ;
+               00483 
+00E0      00484 crlf
+00E0 300D      00485         movlw   0x0d            ; CRLF
+00E1 2000      00486         call    putchr
+00E2 300A      00487        movlw   0x0a            ; for gnuplot - only LF.
+00E3 2800      00488        goto    putchr          ;
+               00489 
+               00490 ;***********************************************************************
+               00491 ; 
+               00492 ;       print  one nybble (4 bit BCD) to serial 
+               00493 ; 
+               00494 
+00E4 390F      00495 PutNyb  ANDLW   0x0F            ; MASK OFF OTHER PACKED BCD DIGIT
+00E5 3E30      00496         ADDLW   0x30            ; Convert BIN to ASCII
+               00497 
+               00498 ;**********************************************************
+               00499 ;
+               00500 ;       Put a data byte to display
+               00501 ;
+               00502 
+00E6 00AC      00503 DATS    movwf   TEMP            ; Save character for LCD
+00E7 2000      00504         call    putchr
+               00505 
+00E8 3400      00506         RETLW   0
+               00507 
+               00508 
+               00509 
+               00510 ;====================== calibration area - type your result
+03FF           00511         org     0x3ff
+03FF      00512 calibration_hot:
+               00513 ;        retlw   d'55'   ; here
+Warning [220] : Address exceeds maximum range for this processor.
+03FF 3438      00514         retlw   d'56'   ; here
+               00515 
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 16
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+ADCON0                            0000001F
+ADCS0                             00000004
+ADCS1                             00000005
+ADCS2                             00000006
+ADFM                              00000007
+ADIE                              00000006
+ADIF                              00000006
+ADON                              00000000
+ADRESH                            0000001E
+ADRESL                            0000009E
+ANS0                              00000000
+ANS1                              00000001
+ANS2                              00000002
+ANS3                              00000003
+ANSEL                             0000009F
+AccA                              0000002D
+B2_BCD                            000000B9
+C                                 00000000
+CAL0                              00000002
+CAL1                              00000003
+CAL2                              00000004
+CAL3                              00000005
+CAL4                              00000006
+CAL5                              00000007
+CHR                               0000002B
+CHS0                              00000002
+CHS1                              00000003
+CINV                              00000004
+CIS                               00000003
+CM0                               00000000
+CM1                               00000001
+CM2                               00000002
+CMCON                             00000019
+CMIE                              00000003
+CMIF                              00000003
+COMP                              00000077
+COMPARATOR_HIGH_RESULT            00000038
+COMPARATOR_LOW_RESULT             00000037
+CONVERT                           00000048
+CONVERT_COMPARATOR_HIGH           0000008D
+CONVERT_COMPARATOR_LOW            00000081
+COUNT                             00000029
+COUT                              00000006
+DATS                              000000E6
+DC                                00000001
+DELAY                             00000020
+DISCHARGE                         00000055
+DISCHARGE2                        00000058
+DISCHARGE3                        0000005B
+DISCHARGE4                        0000005E
+DISCHARGE_COMPARATOR_CAP          00000050
+DISPLAY_COMPARISON_RESULT_HIGH    0000002C
+DISPLAY_COMPARISON_RESULT_LOW     00000026
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 17
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+DISPLAY_VOLTAGE                   00000032
+D_hex                             00000031
+Delay_0                           00000017
+EEADR                             0000009B
+EECON1                            0000009C
+EECON2                            0000009D
+EEDAT                             0000009A
+EEDATA                            0000009A
+EEIE                              00000007
+EEIF                              00000007
+F                                 00000001
+FSR                               00000004
+GETDATA                           00000070
+GIE                               00000007
+GO                                00000001
+GO_DONE                           00000001
+GP0                               00000000
+GP1                               00000001
+GP2                               00000002
+GP3                               00000003
+GP4                               00000004
+GP5                               00000005
+GPIE                              00000003
+GPIF                              00000000
+GPIO                              00000005
+GPIO0                             00000000
+GPIO1                             00000001
+GPIO2                             00000002
+GPIO3                             00000003
+GPIO4                             00000004
+GPIO5                             00000005
+INDF                              00000000
+INIT                              00000005
+INTCON                            0000000B
+INTE                              00000004
+INTEDG                            00000006
+INTF                              00000001
+IOC                               00000096
+IOC0                              00000000
+IOC1                              00000001
+IOC2                              00000002
+IOC3                              00000003
+IOC4                              00000004
+IOC5                              00000005
+IOCB                              00000096
+IOCB0                             00000000
+IOCB1                             00000001
+IOCB2                             00000002
+IOCB3                             00000003
+IOCB4                             00000004
+IOCB5                             00000005
+IRP                               00000007
+IR_out_1                          0000001E
+IR_out_832uS                      0000001C
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 18
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+MAIN                              00000017
+NOT_BOD                           00000000
+NOT_DONE                          00000001
+NOT_GPPU                          00000007
+NOT_PD                            00000003
+NOT_POR                           00000001
+NOT_T1SYNC                        00000002
+NOT_TO                            00000004
+OPTION_REG                        00000081
+OSCCAL                            00000090
+PCL                               00000002
+PCLATH                            0000000A
+PCON                              0000008E
+PEIE                              00000006
+PIE1                              0000008C
+PIR1                              0000000C
+PS0                               00000000
+PS1                               00000001
+PS2                               00000002
+PSA                               00000003
+PutNyb                            000000E4
+RD                                00000000
+RP0                               00000005
+RP1                               00000006
+STATUS                            00000003
+S_Wtemp                           00000032
+S_count                           00000033
+S_mask                            00000036
+T0CS                              00000005
+T0IE                              00000005
+T0IF                              00000002
+T0SE                              00000004
+T1CKPS0                           00000004
+T1CKPS1                           00000005
+T1CON                             00000010
+T1IE                              00000000
+T1IF                              00000000
+T1OSCEN                           00000003
+TEMP                              0000002C
+TMR0                              00000001
+TMR1CS                            00000001
+TMR1GE                            00000006
+TMR1H                             0000000F
+TMR1IE                            00000000
+TMR1IF                            00000000
+TMR1L                             0000000E
+TMR1ON                            00000000
+TRISIO                            00000085
+VCFG                              00000006
+VR0                               00000000
+VR1                               00000001
+VR2                               00000002
+VR3                               00000003
+VRCON                             00000099
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 19
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+VREN                              00000007
+VRR                               00000005
+W                                 00000000
+WAIT                              0000006D
+WPU                               00000095
+WR                                00000001
+WREN                              00000002
+WRERR                             00000003
+Z                                 00000002
+_BODEN_OFF                        00003FBF
+_BODEN_ON                         00003FFF
+_CPD_OFF                          00003FFF
+_CPD_ON                           00003EFF
+_CP_OFF                           00003FFF
+_CP_ON                            00003F7F
+_EC_OSC                           00003FFB
+_EXTRC_OSC_CLKOUT                 00003FFF
+_EXTRC_OSC_NOCLKOUT               00003FFE
+_HS_OSC                           00003FFA
+_INTRC_OSC_CLKOUT                 00003FFD
+_INTRC_OSC_NOCLKOUT               00003FFC
+_LP_OSC                           00003FF8
+_MCLRE_OFF                        00003FDF
+_MCLRE_ON                         00003FFF
+_PWRTE_OFF                        00003FFF
+_PWRTE_ON                         00003FEF
+_WDT_OFF                          00003FF7
+_WDT_ON                           00003FFF
+_XT_OSC                           00003FF9
+__12F675                          00000001
+b2bcd                             000000B9
+b2bcd2                            000000C3
+b2bcd3                            000000C7
+bcd                               00000021
+calibration_hot                   000003FF
+cnt                               0000002A
+common_set_vrcon                  000000B6
+comp_conv_exit                    0000008A
+convert_high_loop                 00000090
+convert_low_loop                  00000084
+crlf                              000000E0
+d1                                00000034
+d2                                00000035
+delay_832uS                       00000013
+display_5_digit_number            00000038
+it_is_hot                         00000013
+long_sleep                        000000A5
+put_clp                           00000004
+putchr                            00000000
+quit_thermal_calibration          00000016
+set_vrcon_high                    000000AF
+set_vrcon_low                     000000B3
+set_vrcon_off                     000000AC
+short_sleep                       00000099
+gpasm-0.13.6 beta               ATX_step_up_calibration.asm5-8-2017  01:22:05           PAGE 20
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+ 
+t_0                               0000000D
+tx_1                              0000000E
+BATTERY_LOAD_KEY                  GPIO,GP2
+BATTERY_LOAD_KEY_TRIS             TRISIO,GP2
+CHARGING_KEY                      GPIO,GP5
+CHARGING_KEY_TRIS                 TRISIO,GP5
+COMPARATOR_INVERTING_INPUT        GPIO,GP1
+COMPARATOR_INVERTING_INPUT_TRIS   TRISIO,GP1
+COMPARATOR_NONINVERTING_INPUT     GPIO,GP0
+COMPARATOR_NONINVERTING_INPUT_TRIS  TRISIO,GP0
+KEYBOARD                          GPIO,GP3
+KEYBOARD_TRIS                     TRISIO,GP3
+LED_IR                            GPIO,GP4
+LED_IR_TRIS                       TRISIO,GP4
+RAMStart                          0x20
+
+
+MEMORY USAGE MAP ('X' = Used,  '-' = Unused)
+
+00000000 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+00000040 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+00000080 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+000000c0 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXX------- ----------------
+000003c0 : ---------------- ---------------- ---------------- ---------------X
+00002000 : -------X-------- ---------------- ---------------- ----------------
+
+All other memory blocks unused.
+
+Program Memory Words Used: 235
+
+
+Errors   :      58
+Warnings :       1 reported,       0 suppressed
+Messages :       7 reported,      19 suppressed
+
