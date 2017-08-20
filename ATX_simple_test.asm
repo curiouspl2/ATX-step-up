@@ -2,7 +2,7 @@
 
 ; this is the simplest version which works in open loop allowing testing of various duty cycles. 
 ;
-; AN1 pin regulates the duty cycle 
+; AN1 pin regulates the duty cycle. 
 
  
 ;
@@ -14,7 +14,8 @@
         processor       12f675
         include         <p12f675.inc>
 
-        __config        _INTRC_OSC_NOCLKOUT & _PWRTE_ON & _WDT_ON & _CP_OFF & _BODEN_ON  & _MCLRE_OFF
+        __config        _INTRC_OSC_NOCLKOUT & _PWRTE_ON & _WDT_OFF & _CP_OFF & _BODEN_ON  & _MCLRE_OFF
+;        __config        _INTRC_OSC_NOCLKOUT & _PWRTE_ON & _WDT_ON & _CP_OFF & _BODEN_ON  & _MCLRE_OFF
 ;       __config        _INTRC_OSC_NOCLKOUT & _PWRTE_ON & _WDT_OFF & _CP_OFF & _BODEN_ON  & _MCLRE_OFF
 
 ;*******************************************************************
@@ -47,7 +48,7 @@ WDT_set_to_2s	macro			; sets WDT to 2 seconds. switches bank to bank0
         nop
         bsf     OPTION_REG,PSA  ; prescaler assigned to WDT.
 	bank0
-		endm
+	endm
 
 
 compare_gp1_gp0		macro	; turn on comparator, compare gp1 (inverting) and gp0 (noninverting)
@@ -114,29 +115,43 @@ analog_GP4	macro
 	bsf	ADCON0,ADON
 	endm
 
+check_voltage 	macro
+		clrwdt
+		compare_gp1_CVref
+		movlw	b'00001111'
+		call	set_vrcon_high
+		btfss	CMCON,COUT
+		goto	voltage_too_high
+		call 	ADC_GP1
+		endm
+
 
 	
 
 
 #define		COMPARATOR_INVERTING_INPUT_TRIS		TRISIO,GP1
-#define		COMPARATOR_NONINVERTING_INPUT_TRIS	TRISIO,GP0
+;#define		COMPARATOR_NONINVERTING_INPUT_TRIS	TRISIO,GP0
 #define		COMPARATOR_INVERTING_INPUT		GPIO,GP1
-#define		COMPARATOR_NONINVERTING_INPUT		GPIO,GP0
+;#define		COMPARATOR_NONINVERTING_INPUT		GPIO,GP0
 #define 	COMPARATOR_INVERTING_INPUT_ANSEL	ANSEL,GP1
-#define		COMPARATOR_NONINVERTING_INPUT_ANSEL	ANSEL,GP0
+;#define		COMPARATOR_NONINVERTING_INPUT_ANSEL	ANSEL,GP0
 
 
 ;#define		ATX_12V_ANSEL				ANSEL,GP5
-#define		ATX_12V_TRIS				TRISIO,GP5
-#define		ATX_12V					GPIO,GP5
+#define		IN_1_TRIS				TRISIO,GP5
+#define		IN_1					GPIO,GP5
 
-#define		ATX_5V_ANSEL				ANSEL,GP2
-#define		ATX_5V_TRIS				TRISIO,GP2
-#define		ATX_5V					GPIO,GP2
+#define		IN_2_ANSEL				ANSEL,GP2
+#define		IN_2_TRIS				TRISIO,GP2
+#define		IN_2					GPIO,GP2
 
-#define		ATX_3V_ANSEL				ANSEL,GP4
-#define		ATX_3V_TRIS				TRISIO,GP4
-#define		ATX_3V					GPIO,GP4
+#define		IN_3_ANSEL				ANSEL,GP4
+#define		IN_3_TRIS				TRISIO,GP4
+#define		IN_3					GPIO,GP4
+
+#define		IN_4_ANSEL				ANSEL,GP0
+#define		IN_4_TRIS				TRISIO,GP0
+#define		IN_4					GPIO,GP0
 
 ;#define		ENABLE_ANSEL				ANSEL,GP3
 #define		ENABLE_TRIS				TRISIO,GP3
@@ -146,6 +161,12 @@ analog_GP4	macro
 #define		LED_IR_TRIS				TRISIO,GP0
 #define		LED_IR					GPIO,GP0
 
+
+; ----------input weights
+#define		IN_1_weight	1
+#define		IN_2_weight	2
+#define		IN_3_weight	1
+#define		IN_4_weight	1
 
 
 ;*******************************************************************
@@ -169,8 +190,25 @@ analog_GP4	macro
     	d1
     	d2
         S_mask                  ; used by IR routine
-	COMPARATOR_LOW_RESULT	; internal comparator based ADC result low range
-	COMPARATOR_HIGH_RESULT 	; internal comparator based ADC result high range
+	COMPARATOR_LOW_1_RESULT	; internal comparator based ADC result low range
+	COMPARATOR_HIGH_1_RESULT 	; internal comparator based ADC result high range
+	COMPARATOR_LOW_2_RESULT	; internal comparator based ADC result low range
+	COMPARATOR_HIGH_2_RESULT 	; internal comparator based ADC result high range
+	COMPARATOR_LOW_3_RESULT	; internal comparator based ADC result low range
+	COMPARATOR_HIGH_3_RESULT 	; internal comparator based ADC result high range
+	COMPARATOR_LOW_4_RESULT	; internal comparator based ADC result low range
+	COMPARATOR_HIGH_4_RESULT 	; internal comparator based ADC result high range
+	
+	error_1_H
+	error_1_L
+	error_2_H
+	error_2_L
+	error_3_H
+	error_3_L
+	error_4_H
+	error_4_L
+
+	safety_init
         endc
 
 
@@ -179,7 +217,8 @@ analog_GP4	macro
 		goto INIT
 
 		org 4            ; Interrupt Vector
-		goto COMP
+		retfie		;return from interrupt
+;		goto COMP
 		org 5
 
 INIT:		
@@ -202,9 +241,9 @@ INIT:
 
 		movwf T1CON      ; A 1 MHz clock is used
 
-
-		bsf INTCON,GIE   ; Enable Global Int
-		bsf INTCON,PEIE  ; Unmask Peripheral Int
+		bcf	INTCON,GIE	; disable interrupts globally as they change bank randomly
+;		bsf INTCON,GIE   ; Enable Global Int
+;		bsf INTCON,PEIE  ; Unmask Peripheral Int
 
 it_is_hot:
 	        bank1
@@ -217,13 +256,14 @@ quit_thermal_calibration:
 		bank1
 		bsf	COMPARATOR_INVERTING_INPUT_TRIS 
 		nop
-		bsf	COMPARATOR_NONINVERTING_INPUT_TRIS
+;		bsf	COMPARATOR_NONINVERTING_INPUT_TRIS
 		nop
 		bsf	COMPARATOR_INVERTING_INPUT_ANSEL
 		nop
-		bsf	COMPARATOR_NONINVERTING_INPUT_ANSEL
+;		bsf	COMPARATOR_NONINVERTING_INPUT_ANSEL
 
-		; GP0 and GP1 set as inputs, capable to do both analog in and comparator 
+		; GP1 is set as input capable of ADC and analog comparator 
+
 
 		bsf	ANSEL,ADCS0
 		nop
@@ -233,17 +273,21 @@ quit_thermal_calibration:
 		nop
 		; 8Tosc is 001 - base for ADC system
 
-		bcf	ATX_12V_TRIS
+		bcf	IN_1_TRIS
 		nop
-;		bcf	ATX_12V_ANSEL
+;		bcf	IN_1_ANSEL	; not applicable
 		nop
-		bcf	ATX_5V_TRIS
+		bcf	IN_2_TRIS
 		nop
-		bcf	ATX_5V_ANSEL
+		bcf	IN_2_ANSEL
 		nop
-		bcf	ATX_3V_TRIS
+		bcf	IN_3_TRIS
 		nop
-		bcf	ATX_3V_ANSEL
+		bcf	IN_3_ANSEL
+		nop
+		bcf	IN_4_TRIS
+		nop
+		bcf	IN_4_ANSEL
 		nop
 		; ATX DC DC converter pins set to outputs
 		
@@ -255,16 +299,22 @@ quit_thermal_calibration:
 
 		bank0
 
-		bsf	ATX_12V
+		bcf	IN_1
 		nop
-		bsf	ATX_5V
+		bcf	IN_2
 		nop
-		bsf	ATX_3V
+		bcf	IN_3
 		nop
-			; fixme. high side drivers require mosfets being enabled by logic low
-			; turn them off ASAP
+		bcf	IN_4
+		nop
+
+		clrf	safety_init	; clear safety init countdown
 
 MAIN:		
+		decfsz 	safety_init
+		goto	MAIN_MAIN
+		goto	INIT		; initalise all inputs once in a while to prevent EMP bugs
+MAIN_MAIN:
 		clrwdt
 		compare_gp1_CVref
 		movlw	b'00001111'
@@ -272,30 +322,158 @@ MAIN:
 voltage_too_high:
 		btfss	CMCON,COUT
 		goto	voltage_too_high
-		call	CONVERT_COMPARATOR_HIGH_5V
-		call 	ADC_GP0
+		call	ADC_GP1
+		call	CONVERT_COMPARATOR_HIGH_1
+		check_voltage			;check
+		call 	store_error_1
+		call	CONVERT_COMPARATOR_HIGH_2
+		check_voltage			;check
+		call	store_error_2
+		call	CONVERT_COMPARATOR_HIGH_3
+		check_voltage			;check
+		call	store_error_3
+		call	CONVERT_COMPARATOR_HIGH_4
+		check_voltage			;check
+		call	store_error_4
+
+		check_voltage
+
+		call	rough_compensate_1
+		call	rough_compensate_2
+		call	rough_compensate_3
+		call	rough_compensate_4
 
 		goto	MAIN
 
+;-----------------------------------
+
+rough_compensate_1:
+		movfw	COMPARATOR_HIGH_1_RESULT	; 1- highest error, 15 - lowest error
+		andlw	b'00001111'
+		sublw 	b'00001111'			; 15 highest error, 1 = lowest error
+		movwf	DELAY
+		incf	DELAY	; make sure it is not 0
+
+rough_compensate_1_loop:
+		call	high_duty_cycle_1
+		decfsz	DELAY
+		goto	rough_compensate_1_loop
+		return
+
+rough_compensate_2:
+		movfw	COMPARATOR_HIGH_2_RESULT	; 1- highest error, 15 - lowest error
+		andlw	b'00001111'
+		sublw 	b'00001111'			; 15 highest error, 1 = lowest error
+		movwf	DELAY
+		incf	DELAY	; make sure it is not 0
+
+rough_compensate_2_loop:
+		call	high_duty_cycle_2
+		decfsz	DELAY
+		goto	rough_compensate_2_loop
+		return
+
+rough_compensate_3:
+		movfw	COMPARATOR_HIGH_3_RESULT	; 1- highest error, 15 - lowest error
+		andlw	b'00001111'
+		sublw 	b'00001111'			; 15 highest error, 1 = lowest error
+		movwf	DELAY
+		incf	DELAY	; make sure it is not 0
+
+rough_compensate_3_loop:
+		call	high_duty_cycle_3
+		decfsz	DELAY
+		goto	rough_compensate_3_loop
+		return
+
+rough_compensate_4:
+		movfw	COMPARATOR_HIGH_4_RESULT	; 1- highest error, 15 - lowest error
+ 		andlw	b'00001111'
+		sublw 	b'00001111'			; 15 highest error, 1 = lowest error
+		movwf	DELAY
+		incf	DELAY	; make sure it is not 0
+
+rough_compensate_4_loop:
+		call	high_duty_cycle_4
+		decfsz	DELAY
+		goto	rough_compensate_4_loop
+		return
 
 
-		call 	CONVERT			; measure voltage of battery
-		clrwdt
-		call	DISPLAY_VOLTAGE		; display voltage
-		clrwdt
-		call 	CONVERT_COMPARATOR_LOW	; measure voltage of battery using internal reference voltage and comparator
-		clrwdt
-		call 	DISPLAY_COMPARISON_RESULT_LOW ; display voltage of battery measured using comparator. 
 
-		clrwdt
-		call 	CONVERT_COMPARATOR_HIGH	; measure voltage of battery using internal reference voltage and comparator
-		clrwdt
-		call 	DISPLAY_COMPARISON_RESULT_HIGH	 ; display voltage of battery measured using comparator. 
+; IN1 - GP5 
+; IN2 - GP2 
+; IN3 - GP4
+; IN4 - GP0
 
-		call	crlf			; new line. 
-		clrwdt
+
+high_duty_cycle_1:
+		movlw	b'00100000'
+		goto duty_cycle_common
+high_duty_cycle_2:
+		movlw	b'00000100'
+		goto duty_cycle_common
+high_duty_cycle_3:
+		movlw	b'00010000'
+		goto duty_cycle_common
+high_duty_cycle_4:
+		movlw	b'00000001'
+		goto duty_cycle_common
+
+duty_cycle_common:
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+		movwf	GPIO	;on
+		clrf	GPIO	 ; off
+;16
+		return
+
+
+;		call 	CONVERT			; measure voltage of battery
+;		clrwdt
+;		call	DISPLAY_VOLTAGE		; display voltage
+;		clrwdt
+;		call 	CONVERT_COMPARATOR_LOW	; measure voltage of battery using internal reference voltage and comparator
+;		clrwdt
+;		call 	DISPLAY_COMPARISON_RESULT_LOW ; display voltage of battery measured using comparator. 
+;
+;		clrwdt
+;		call 	CONVERT_COMPARATOR_HIGH	; measure voltage of battery using internal reference voltage and comparator
+;		clrwdt
+;		call 	DISPLAY_COMPARISON_RESULT_HIGH	 ; display voltage of battery measured using comparator. 
+;
+;		call	crlf			; new line. 
+;		clrwdt
 ;	call 	long_sleep		; sleep for 2 seconds.
-		goto MAIN
+;		goto MAIN
 
 ADC_GP0:
 	btfsc 	ADCON0,GO
@@ -313,6 +491,41 @@ ADC_GP1:
 	bsf	ADCON0,GO
 	return
 
+store_error_1:
+	bank1
+	movfw	ADRESL
+	movwf	error_1_L
+	movfw	ADRESH
+	movwf	error_1_H
+	bank0
+	return
+
+store_error_2:
+	bank1
+	movfw	ADRESL
+	movwf	error_2_L
+	movfw	ADRESH
+	movwf	error_2_H
+	bank0
+	return
+
+store_error_3:
+	bank1
+	movfw	ADRESL
+	movwf	error_2_L
+	movfw	ADRESH
+	movwf	error_2_H
+	bank0
+	return
+
+store_error_4:
+	bank1
+	movfw	ADRESL
+	movwf	error_2_L
+	movfw	ADRESH
+	movwf	error_2_H
+	bank0
+	return
 
 
 
@@ -322,7 +535,7 @@ DISPLAY_COMPARISON_RESULT_LOW:
 	clrf 	AccA
 	clrf	AccA+1
 	clrf	AccA+2
-	movfw	COMPARATOR_LOW_RESULT
+	movfw	COMPARATOR_LOW_1_RESULT
 	movwf	AccA+3
 	goto	display_5_digit_number
 
@@ -330,7 +543,7 @@ DISPLAY_COMPARISON_RESULT_HIGH:
 	clrf 	AccA
 	clrf	AccA+1
 	clrf	AccA+2
-	movfw	COMPARATOR_HIGH_RESULT
+	movfw	COMPARATOR_HIGH_1_RESULT
 	movwf	AccA+3
 	goto	display_5_digit_number
 
@@ -383,97 +596,110 @@ display_5_digit_number:		; this is common subroutine to display 5 digit (16bit d
 
 ;-------------------------16bit ADC subroutine
 
-CONVERT:	
-		bank0
-		compare_gp1_gp0		; turn on comparator, compare gp1 (inverting) and gp0 (noninverting)
-		clrf 	TMR1L       ; Clear Timer 1 L
-		clrf 	TMR1H       ; Clear Timer 1 H
-
-		bank1
-		bsf	COMPARATOR_INVERTING_INPUT_TRIS  ; set GP0 as input
-		bcf 	PIR1,TMR1IF
-
-DISCHARGE_COMPARATOR_CAP:
-		bank1            ; 
-		bcf 	COMPARATOR_NONINVERTING_INPUT_TRIS		; Set comparator inverting input as output
-		bank0
-		bcf 	COMPARATOR_NONINVERTING_INPUT		; Discharge capacitor
-		clrf	DELAY
-DISCHARGE:	
-		decfsz  DELAY
-		goto 	DISCHARGE
-		clrf	DELAY
-DISCHARGE2:	
-		decfsz  DELAY
-		goto 	DISCHARGE2
-		clrf	DELAY
-DISCHARGE3:	
-		decfsz  DELAY
-		goto 	DISCHARGE3
-		clrf	DELAY
-DISCHARGE4:	
-		decfsz  DELAY
-		goto 	DISCHARGE4
-
-		bank1		;  switch bank to 1
-		bsf	COMPARATOR_NONINVERTING_INPUT_TRIS		; make comparator inverting input input, 
-		bank0		; switch back to bank0 . 
-		btfsc	COMPARATOR_NONINVERTING_INPUT		;  make sure capacitor got discharged
-		goto 	DISCHARGE_COMPARATOR_CAP		; if not, go back discharging it. 
-				; else 
-		bcf 	PIR1,CMIF				; Clear comp Int flag
-
-				 ; cap starts charging 
-				
-		bank0
-		bsf 	T1CON,TMR1ON				; Start Timer 1
-		movf	CMCON,f					; Read to sync output
-		bank1
-		bsf	PIE1,TMR1IE				; unmask TMR1 interrupt 
-		nop
-		bsf	PIE1,CMIE				; Unmask Comp Int
-
-WAIT:		nop
-		btfsc 	PIE1,CMIE				; Wait for comp Int
-								; ie wait until Int
-		goto 	WAIT        				; Enable bit has been
-				; cleared
-GETDATA:			; Timer 1 contains
-				; DATA (TMR1L TMR1H)
-
-		bank1            ; 
-		bcf	COMPARATOR_NONINVERTING_INPUT_TRIS		; Set comparator inverting input as output. not sure if this will make results better or worse...
-		bank0
-		bcf 	COMPARATOR_NONINVERTING_INPUT		; Discharge capacitor
-		comparator_off					; turn off comparator to conserve power
-
-		return
-
+;CONVERT:	
+;		bank0
+;		compare_gp1_gp0		; turn on comparator, compare gp1 (inverting) and gp0 (noninverting)
+;		clrf 	TMR1L       ; Clear Timer 1 L
+;		clrf 	TMR1H       ; Clear Timer 1 H
+;
+;		bank1
+;		bsf	COMPARATOR_INVERTING_INPUT_TRIS  ; set GP0 as input
+;		bcf 	PIR1,TMR1IF
+;
+;DISCHARGE_COMPARATOR_CAP:
+;		bank1            ; 
+;		bcf 	COMPARATOR_NONINVERTING_INPUT_TRIS		; Set comparator inverting input as output
+;		bank0
+;		bcf 	COMPARATOR_NONINVERTING_INPUT		; Discharge capacitor
+;		clrf	DELAY
+;DISCHARGE:	
+;		decfsz  DELAY
+;		goto 	DISCHARGE
+;		clrf	DELAY
+;DISCHARGE2:	
+;		decfsz  DELAY
+;		goto 	DISCHARGE2
+;		clrf	DELAY
+;DISCHARGE3:	
+;		decfsz  DELAY
+;		goto 	DISCHARGE3
+;		clrf	DELAY
+;DISCHARGE4:	
+;		decfsz  DELAY
+;		goto 	DISCHARGE4
+;
+;		bank1		;  switch bank to 1
+;		bsf	COMPARATOR_NONINVERTING_INPUT_TRIS		; make comparator inverting input input, 
+;		bank0		; switch back to bank0 . 
+;		btfsc	COMPARATOR_NONINVERTING_INPUT		;  make sure capacitor got discharged
+;		goto 	DISCHARGE_COMPARATOR_CAP		; if not, go back discharging it. 
+;				; else 
+;		bcf 	PIR1,CMIF				; Clear comp Int flag
+;
+;				 ; cap starts charging 
+;				
+;		bank0
+;		bsf 	T1CON,TMR1ON				; Start Timer 1
+;		movf	CMCON,f					; Read to sync output
+;		bank1
+;		bsf	PIE1,TMR1IE				; unmask TMR1 interrupt 
+;		nop
+;		bsf	PIE1,CMIE				; Unmask Comp Int
+;
+;WAIT:		nop
+;		btfsc 	PIE1,CMIE				; Wait for comp Int
+;								; ie wait until Int
+;		goto 	WAIT        				; Enable bit has been
+;				; cleared
+;GETDATA:			; Timer 1 contains
+;				; DATA (TMR1L TMR1H)
+;
+;		bank1            ; 
+;		bcf	COMPARATOR_NONINVERTING_INPUT_TRIS		; Set comparator inverting input as output. not sure if this will make results better or worse...
+;		bank0
+;		bcf 	COMPARATOR_NONINVERTING_INPUT		; Discharge capacitor
+;		comparator_off					; turn off comparator to conserve power
+;
+;		return
+;
 ;           Comparator Interrupt Service routine
-
-COMP:		bank0
-		bcf 	T1CON,TMR1ON				; Stop Timer 1
-		bcf 	PIR1,CMIF					; Clear Interrupt flag
-		nop
-		bcf 	PIR1,TMR1IF
-		bank1
-		bcf 	PIE1,CMIE					; Mask Comparator Int
-		nop
-		bcf 	PIE1,TMR1IE
-		retfie 
+;
+;COMP:		bank0
+;		bcf 	T1CON,TMR1ON				; Stop Timer 1
+;		bcf 	PIR1,CMIF					; Clear Interrupt flag
+;		nop
+;		bcf 	PIR1,TMR1IF
+;		bank1
+;		bcf 	PIE1,CMIE					; Mask Comparator Int
+;		nop
+;		bcf 	PIE1,TMR1IE
+;		retfie 
 
 ;--------------------------measure voltage using built in reference voltage 
 
-CONVERT_COMPARATOR_LOW:
-	clrf	COMPARATOR_LOW_RESULT
-	compare_gp1_CVref
-convert_low_loop:
-	movfw	COMPARATOR_LOW_RESULT
-	call	set_vrcon_low
-	btfsc	CMCON,COUT
-	goto	comp_conv_exit
-	incfsz	COMPARATOR_LOW_RESULT	
-	goto	convert_low_loop
+;CONVERT_COMPARATOR_LOW:
+;	clrf	COMPARATOR_LOW_RESULT
+;	compare_gp1_CVref
+;convert_low_loop:
+;	movfw	COMPARATOR_LOW_RESULT
+;	call	set_vrcon_low
+;	btfsc	CMCON,COUT
+;	goto	comp_conv_exit
+;	incfsz	COMPARATOR_LOW_RESULT	
+;	goto	convert_low_loop
+
+;CONVERT_COMPARATOR_HIGH:
+;	clrf	COMPARATOR_HIGH_RESULT
+;	compare_gp1_CVref
+;convert_high_loop:
+;	movfw	COMPARATOR_HIGH_RESULT
+;	call	set_vrcon_high
+;	btfsc	CMCON,COUT
+;	goto	comp_conv_exit	
+;	incfsz	COMPARATOR_HIGH_RESULT
+;	goto	convert_high_loop
+;	goto	comp_conv_exit
+
 
 
 comp_conv_exit:
@@ -481,56 +707,103 @@ comp_conv_exit:
 	call 	set_vrcon_off
 	return
 
-CONVERT_COMPARATOR_LOW_5V:
-	bcf	ATX_5V		; on
-	clrf	COMPARATOR_LOW_RESULT
+CONVERT_COMPARATOR_LOW_1:
+	bsf	IN_1		; on
+	clrf	COMPARATOR_LOW_1_RESULT
 	compare_gp1_CVref
-	bsf	ATX_5V		;off
+	bcf	IN_1		;off
 	nop
-convert_low_5V_loop:
-	bcf	ATX_5V		;on
-	movfw	COMPARATOR_LOW_RESULT
-	bsf	ATX_5V		;off
+convert_low_1_loop:
+	bsf	IN_1		;on
+	movfw	COMPARATOR_LOW_1_RESULT
+	bcf	IN_1		;off
 	call	set_vrcon_low
 	btfsc	CMCON,COUT
 	goto	comp_conv_exit
-	incfsz	COMPARATOR_LOW_RESULT	
-	goto	convert_low_5V_loop
+	incfsz	COMPARATOR_LOW_1_RESULT	
+	goto	convert_low_1_loop
 	movlw	b'00010000'
-	movwf	COMPARATOR_LOW_RESULT
+	movwf	COMPARATOR_LOW_1_RESULT
 	goto	comp_conv_exit
 
-CONVERT_COMPARATOR_HIGH_5V:
-	bcf	ATX_5V		; on
-	clrf	COMPARATOR_HIGH_RESULT
+CONVERT_COMPARATOR_HIGH_1:
+	bsf	IN_1		; on
+	clrf	COMPARATOR_HIGH_1_RESULT
 	compare_gp1_CVref
-	bsf	ATX_5V		;off
+	bcf	IN_1		;off
 	nop
-convert_high_5V_loop:
-	bcf	ATX_5V		;on
-	movfw	COMPARATOR_HIGH_RESULT
-	bsf	ATX_5V		;off
+convert_high_1_loop:
+	bsf	IN_1		;on
+	movfw	COMPARATOR_HIGH_1_RESULT
+	bcf	IN_1		;off
 	call	set_vrcon_high
 	btfsc	CMCON,COUT
 	goto	comp_conv_exit
-	incfsz	COMPARATOR_HIGH_RESULT	
-	goto	convert_high_5V_loop
+	incfsz	COMPARATOR_HIGH_1_RESULT	
+	goto	convert_high_1_loop
 	movlw	b'00010000'
-	movwf	COMPARATOR_HIGH_RESULT
+	movwf	COMPARATOR_HIGH_1_RESULT
 	goto	comp_conv_exit
 
-
-CONVERT_COMPARATOR_HIGH:
-	clrf	COMPARATOR_HIGH_RESULT
+CONVERT_COMPARATOR_HIGH_2:
+	bsf	IN_2		; on
+	clrf	COMPARATOR_HIGH_2_RESULT
 	compare_gp1_CVref
-convert_high_loop:
-	movfw	COMPARATOR_HIGH_RESULT
+	bcf	IN_2		;off
+	nop
+convert_high_2_loop:
+	bsf	IN_2		;on
+	movfw	COMPARATOR_HIGH_2_RESULT
+	bcf	IN_2		;off
 	call	set_vrcon_high
 	btfsc	CMCON,COUT
-	goto	comp_conv_exit	
-	incfsz	COMPARATOR_HIGH_RESULT
-	goto	convert_high_loop
 	goto	comp_conv_exit
+	incfsz	COMPARATOR_HIGH_2_RESULT	
+	goto	convert_high_2_loop
+	movlw	b'00010000'
+	movwf	COMPARATOR_HIGH_2_RESULT
+	goto	comp_conv_exit
+
+CONVERT_COMPARATOR_HIGH_3:
+	bsf	IN_3		; on
+	clrf	COMPARATOR_HIGH_3_RESULT
+	compare_gp1_CVref
+	bcf	IN_3		;off
+	nop
+convert_high_3_loop:
+	bsf	IN_3		;on
+	movfw	COMPARATOR_HIGH_3_RESULT
+	bcf	IN_3		;off
+	call	set_vrcon_high
+	btfsc	CMCON,COUT
+	goto	comp_conv_exit
+	incfsz	COMPARATOR_HIGH_3_RESULT	
+	goto	convert_high_3_loop
+	movlw	b'00010000'
+	movwf	COMPARATOR_HIGH_3_RESULT
+	goto	comp_conv_exit
+
+CONVERT_COMPARATOR_HIGH_4:
+	bsf	IN_4		; on
+	clrf	COMPARATOR_HIGH_4_RESULT
+	compare_gp1_CVref
+	bcf	IN_4		;off
+	nop
+convert_high_4_loop:
+	bsf	IN_4		;on
+	movfw	COMPARATOR_HIGH_4_RESULT
+	bcf	IN_4		;off
+	call	set_vrcon_high
+	btfsc	CMCON,COUT
+	goto	comp_conv_exit
+	incfsz	COMPARATOR_HIGH_4_RESULT	
+	goto	convert_high_4_loop
+	movlw	b'00010000'
+	movwf	COMPARATOR_HIGH_4_RESULT
+	goto	comp_conv_exit
+
+
+
 
 
 
